@@ -18,6 +18,7 @@ import socket
 import json
 import xml.etree.ElementTree as ET
 from os import path
+from datetime import datetime
 
 
 addon = xbmcaddon.Addon('service.nfo.watchedstate.updater')
@@ -47,7 +48,7 @@ class NFOWatchedstateUpdater():
             xbmc.sleep(int(delay))
             #xbmc.executebuiltin('ActivateWindow(10018)')
             exit(0)
-                
+        
 
     def handleMsg(self, msg):
         jsonmsg = json.loads(msg)        
@@ -76,46 +77,47 @@ class NFOWatchedstateUpdater():
 
 
     def VideoLibraryOnUpdate(self, jsonmsg):        
-        #xbmc.log(str(jsonmsg["params"]["data"]["item"]["id"]))
-        #xbmc.log(str(jsonmsg["params"]["data"]["item"]["type"]))
-        #xbmc.log(str(jsonmsg["params"]["data"]["playcount"]))
-            
-        if (jsonmsg["params"]["data"]["item"].has_key("id")) and (jsonmsg["params"]["data"]["item"].has_key("type")) and (jsonmsg["params"]["data"].has_key("playcount")):
-            itemid = jsonmsg["params"]["data"]["item"]["id"]
-            itemtype = jsonmsg["params"]["data"]["item"]["type"]
-            itemplaycount = jsonmsg["params"]["data"]["playcount"]
-
-            #xbmc.log(str(type(itemid)))
-            #xbmc.log(str(type(itemtype)))
-            #xbmc.log(str(type(itemplaycount)))
-
-            if itemtype == u'movie':
-                msg = xbmc.executeJSONRPC('{"jsonrpc":"2.0","method":"VideoLibrary.GetMovieDetails","params":{"movieid":%d,"properties":["file"]},"id":1}' %(itemid) )
-                jsonmsg = json.loads(msg)
-
-                filepath = jsonmsg["result"]["moviedetails"]["file"]
-
-                self.updateNFO(filepath, itemplaycount)
-
-
-            ##When a season is marked as un-/watched, all episodes are edited
-            if itemtype == u'episode':
-                msg = xbmc.executeJSONRPC('{"jsonrpc":"2.0","method":"VideoLibrary.GetEpisodeDetails","params":{"episodeid":%s,"properties":["file"]},"id":1}' %(str(itemid)) )
-                jsonmsg = json.loads(msg)
-
-                filepath = jsonmsg["result"]["episodedetails"]["file"]
-
-                self.updateNFO(filepath, itemplaycount)
-
-
-            #if itemtype == u'tvshow':
-                
+        # xbmc.log(str(jsonmsg), 2)
         
-    def updateNFO(self, filepath, playcount):
-        filepath = filepath.replace(path.splitext(filepath)[1], '.nfo')
+        try:
+            if (("item" in jsonmsg["params"]["data"]) and ("playcount" in jsonmsg["params"]["data"]) and\
+                ("id" in jsonmsg["params"]["data"]["item"]) and ("type" in jsonmsg["params"]["data"]["item"])):
+                itemid = jsonmsg["params"]["data"]["item"]["id"]
+                itemtype = jsonmsg["params"]["data"]["item"]["type"]
+                itemplaycount = jsonmsg["params"]["data"]["playcount"]
 
-        if xbmcvfs.exists(filepath):
-            sFile = xbmcvfs.File(filepath)
+                if itemtype == u'movie':
+                    msg = xbmc.executeJSONRPC('{"jsonrpc":"2.0","method":"VideoLibrary.GetMovieDetails","params":{"movieid":%d,"properties":["file"]},"id":1}' %(itemid) )
+                    jsonmsg = json.loads(msg)
+
+                    filepath = jsonmsg["result"]["moviedetails"]["file"]
+                    nfopath = filepath.replace(path.splitext(filepath)[1], '.nfo')
+                    if not xbmcvfs.exists(nfopath):
+                        nfopath = filepath.replace(path.split(filepath)[1], 'movie.nfo') 
+
+                    self.updateNFO(nfopath, itemplaycount)
+                    
+                ##When a tvshow/season is marked as un-/watched, all episodes are edited
+                if itemtype == u'episode':
+                    msg = xbmc.executeJSONRPC('{"jsonrpc":"2.0","method":"VideoLibrary.GetEpisodeDetails","params":{"episodeid":%s,"properties":["file"]},"id":1}' %(str(itemid)) )
+                    jsonmsg = json.loads(msg)
+
+                    filepath = jsonmsg["result"]["episodedetails"]["file"]
+                    nfopath = filepath.replace(path.splitext(filepath)[1], '.nfo')
+
+                    self.updateNFO(nfopath, itemplaycount)
+
+                # if itemtype == u'tvshow': 
+                # not necessary as all episode will get updated, only if need to update flag in tvshow.nfo
+
+        except Exception, e:
+            # raise
+            xbmc.executebuiltin('Notification(%s, Error: %s, %s, %s)' %(addon_name, str(e), delay, logo) )
+
+    def updateNFO(self, nfopath, playcount):
+        nfofile = path.split(nfopath)[1]
+        if xbmcvfs.exists(nfopath):
+            sFile = xbmcvfs.File(nfopath)
             currentBuffer = []
             msg = ''
             while True:
@@ -129,15 +131,24 @@ class NFOWatchedstateUpdater():
             
             tree = ET.ElementTree(ET.fromstring(msg))
             root = tree.getroot()
-
+            
+            # update playcount
             p = root.find('playcount')
             if p is None:
                 p = ET.SubElement(root, 'playcount')
             p.text = str(playcount)
 
+            # update lastplayed if played
+            if playcount > 0:
+                l = root.find('lastplayed')
+                if l is None:
+                    l = ET.SubElement(root, 'lastplayed')
+                l.text = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+            # update watched if enabled
             if addon.getSetting('changewatchedtag') == 'true':
                 w = root.find('watched')
-                if (w is None) and (addon.getSetting('createwatchedtag') == 'true'):
+                if w is None:
                     w = ET.SubElement(root, 'watched')
                 if playcount > 0:
                     w.text = 'true'
@@ -149,23 +160,21 @@ class NFOWatchedstateUpdater():
             msg = ET.tostring(root, encoding='UTF-8')
 
             if msg:
-                dFile = xbmcvfs.File(filepath, 'w')
+                dFile = xbmcvfs.File(nfopath, 'w')
                 dFile.write(msg) ##String msg or bytearray: bytearray(msg)
                 dFile.close()
 
-                #if addon.getSetting('notification') == 'true':
-                #    xbmc.executebuiltin('Notification(%s, NFO updated, %s, %s)' %(addon_name, noti_duration, logo) )
-            else:
                 if addon.getSetting('notification') == 'true':
-                    xbmc.executebuiltin('Notification(%s, Error occured, %s, %s)' %(addon_name, delay, logo) )
+                    xbmc.executebuiltin('Notification(%s, NFO updated: %s, %s, %s)' %(addon_name, nfofile.encode('utf-8'), delay, logo) )
+            else:
+                xbmc.executebuiltin('Notification(%s, Error occured: %s, %s, %s)' %(addon_name, nfofile.encode('utf-8'), delay, logo) )
 
         else:
-            if addon.getSetting('notification') == 'true':
-                xbmc.executebuiltin('Notification(%s, File not found, %s, %s)' %(addon_name, delay, logo) )
+            xbmc.executebuiltin('Notification(%s, File not found: %s, %s, %s)' %(addon_name, nfofile.encode('utf-8'), delay, logo) )
 
 
     def prettyPrintXML(self, elem, level=0):
-        i = '\n' + level * '  '
+        i = '\n' + level * '   '
         if len(elem):
             if not elem.text or not elem.text.strip():
                 elem.text = i + "  "

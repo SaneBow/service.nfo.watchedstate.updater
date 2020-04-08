@@ -1,3 +1,15 @@
+[B]1.1.13[/B] (2020-03-24)
+- xb MOD: add lastplayed
+
+[B]1.1.12[/B] (2016-08-05)
+- Minor cleanup
+
+[B]1.1.11[/B] (2016-08-03)
+- Minor cleanup
+
+[B]1.1.10[/B] (2016-07-23)
+- axbmcuser MOD: Fix for KODI 17 (Krypton): "videolibrary" renamed to "Videos" [default.py]
+
 v1.1.1 (Mar 12, 2015):
 - Create/Add new watched-tag if desired
 
